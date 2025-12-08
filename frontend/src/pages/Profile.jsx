@@ -1,429 +1,210 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { profileAPI, authAPI } from "../api";
 import Card from "../components/Card";
 
 function Profile({ walletData }) {
   const [profile, setProfile] = useState(null);
-  const [beneficiaries, setBeneficiaries] = useState([]);
   const [loading, setLoading] = useState(true);
-
   const [editMode, setEditMode] = useState(false);
-  const [formData, setFormData] = useState({ full_name: "", email: "" });
 
-  const [newBeneficiary, setNewBeneficiary] = useState({
-    wallet_id: "",
-    name: "",
-  });
+  // Profile Update State
+  const [fullName, setFullName] = useState("");
+  const [zakatEnabled, setZakatEnabled] = useState(true);
 
-  const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState("");
+  // Email Change State
+  const [showEmailChange, setShowEmailChange] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [emailStep, setEmailStep] = useState(1); // 1: Request, 2: Confirm
+  const [msg, setMsg] = useState("");
 
-  const [publicKeyBase64, setPublicKeyBase64] = useState("");
-  const [zakatInfo, setZakatInfo] = useState({
-    last_deduction: null,
-    enabled: true,
-  });
-
-  // Helpers for localStorage keys
-  const walletId = walletData?.wallet_id;
-  const walletKey = "wallet"; // main wallet object already used in App.jsx
-  const beneficiariesKey = walletId ? `beneficiaries_${walletId}` : null;
-  const zakatKey = walletId ? `zakat_${walletId}` : null;
-
-  useEffect(() => {
-    if (!walletId) {
-      setLoading(false);
-      return;
-    }
-
+  // FIX: Wrap fetchProfile in useCallback so it's stable across renders
+  const fetchProfile = useCallback(async () => {
+    if (!walletData?.wallet_id) return;
     try {
-      setLoading(true);
-
-      // 1) Base profile from walletData / localStorage
-      let storedWallet = walletData;
-      const raw = localStorage.getItem(walletKey);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          storedWallet = { ...storedWallet, ...parsed };
-        } catch {
-          // ignore parse error
-        }
-      }
-
-      const baseProfile = {
-        full_name: storedWallet.full_name || "",
-        email: storedWallet.email || "",
-        cnic: storedWallet.cnic || "",
-        wallet_id: storedWallet.wallet_id,
-        public_key: storedWallet.public_key || "",
-      };
-
-      setProfile(baseProfile);
-      setFormData({
-        full_name: baseProfile.full_name,
-        email: baseProfile.email,
-      });
-
-      // 2) Public key → base64 if needed
-      let pk = "";
-      if (typeof baseProfile.public_key === "string") {
-        pk = baseProfile.public_key;
-      } else if (baseProfile.public_key) {
-        pk = btoa(
-          String.fromCharCode.apply(
-            null,
-            new Uint8Array(baseProfile.public_key)
-          )
-        );
-      }
-      setPublicKeyBase64(pk);
-
-      // 3) Beneficiaries from localStorage
-      if (beneficiariesKey) {
-        const benRaw = localStorage.getItem(beneficiariesKey);
-        if (benRaw) {
-          try {
-            const parsed = JSON.parse(benRaw);
-            setBeneficiaries(parsed);
-          } catch {
-            setBeneficiaries([]);
-          }
-        }
-      }
-
-      // 4) Zakat info from localStorage
-      if (zakatKey) {
-        const zakRaw = localStorage.getItem(zakatKey);
-        if (zakRaw) {
-          try {
-            const parsed = JSON.parse(zakRaw);
-            setZakatInfo({
-              last_deduction: parsed.last_deduction || null,
-              enabled:
-                typeof parsed.enabled === "boolean" ? parsed.enabled : true,
-            });
-          } catch {
-            // keep defaults
-          }
-        }
-      }
-
-      setMessage("");
-      setMessageType("");
+      const res = await profileAPI.getProfile(walletData.wallet_id);
+      setProfile(res.data);
+      setFullName(res.data.full_name);
+      setZakatEnabled(res.data.zakat_enabled);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletId]);
+  }, [walletData]);
 
-  const persistWalletProfile = (updatedProfile) => {
-    // Update "wallet" object in localStorage so Dashboard/Nav also see changes
-    const raw = localStorage.getItem(walletKey);
-    let stored = {};
-    if (raw) {
-      try {
-        stored = JSON.parse(raw);
-      } catch {
-        stored = {};
-      }
-    }
-    const merged = {
-      ...stored,
-      full_name: updatedProfile.full_name,
-      email: updatedProfile.email,
-      cnic: updatedProfile.cnic,
-      wallet_id: updatedProfile.wallet_id,
-      public_key: updatedProfile.public_key,
-    };
-    localStorage.setItem(walletKey, JSON.stringify(merged));
-  };
+  // FIX: Add fetchProfile to dependency array
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
 
-  const handleUpdateProfile = (e) => {
+  const handleUpdateProfile = async (e) => {
     e.preventDefault();
-    if (!profile) return;
-
-    const updated = {
-      ...profile,
-      full_name: formData.full_name,
-      email: formData.email,
-    };
-
-    setProfile(updated);
-    persistWalletProfile(updated);
-
-    setMessageType("success");
-    setMessage(
-      "Profile updated locally. (In a full system, email changes would trigger OTP re-verification and update DB.)"
-    );
-    setEditMode(false);
+    try {
+      await profileAPI.updateProfile(profile.user_id, fullName, zakatEnabled);
+      setMsg("Profile updated successfully!");
+      setEditMode(false);
+      fetchProfile(); // Refresh
+    } catch (err) {
+      setMsg("Failed to update profile.");
+    }
   };
 
-  const handleAddBeneficiary = (e) => {
+  const handleRequestEmailChange = async (e) => {
     e.preventDefault();
-    if (!newBeneficiary.wallet_id || !newBeneficiary.name) {
-      setMessageType("error");
-      setMessage("Beneficiary wallet ID and name are required");
-      return;
+    try {
+      const res = await authAPI.requestEmailChange(profile.user_id, newEmail);
+      setMsg(`OTP sent to ${newEmail}`);
+      // Show OTP in console for demo if backend sends it
+      if (res.data.otp) console.log("Email Change OTP:", res.data.otp);
+      setEmailStep(2);
+    } catch (err) {
+      setMsg("Failed to send OTP.");
     }
-
-    const updated = [
-      ...beneficiaries,
-      {
-        id: Date.now(),
-        beneficiary_wallet_id: newBeneficiary.wallet_id,
-        beneficiary_name: newBeneficiary.name,
-      },
-    ];
-    setBeneficiaries(updated);
-    if (beneficiariesKey) {
-      localStorage.setItem(beneficiariesKey, JSON.stringify(updated));
-    }
-
-    setNewBeneficiary({ wallet_id: "", name: "" });
-    setMessageType("success");
-    setMessage("Beneficiary added (stored locally).");
   };
 
-  const handleRemoveBeneficiary = (id) => {
-    const updated = beneficiaries.filter((b) => b.id !== id);
-    setBeneficiaries(updated);
-    if (beneficiariesKey) {
-      localStorage.setItem(beneficiariesKey, JSON.stringify(updated));
+  const handleConfirmEmailChange = async (e) => {
+    e.preventDefault();
+    try {
+      await authAPI.confirmEmailChange(profile.user_id, newEmail, emailOtp);
+      setMsg("Email updated successfully! Please re-login.");
+      setShowEmailChange(false);
+      fetchProfile();
+    } catch (err) {
+      setMsg("Invalid OTP.");
     }
-    setMessageType("success");
-    setMessage("Beneficiary removed.");
   };
 
-  if (loading) {
-    return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="text-white text-center">Loading profile...</div>
-      </div>
-    );
-  }
+  if (loading)
+    return <div className="text-white text-center mt-10">Loading...</div>;
 
-  if (!profile) {
+  if (!profile)
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="text-red-400 text-center">Profile not found</div>
-      </div>
+      <div className="text-red-400 text-center mt-10">Profile not found.</div>
     );
-  }
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <h1 className="text-4xl font-bold text-white mb-6">Wallet Profile</h1>
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <h1 className="text-3xl font-bold text-white mb-6">Wallet Profile</h1>
 
-      {message && (
-        <div
-          className={`mb-6 p-4 rounded ${
-            messageType === "success"
-              ? "bg-green-500/20 border border-green-500 text-green-100"
-              : "bg-red-500/20 border border-red-500 text-red-100"
-          }`}
-        >
-          {message}
+      {msg && (
+        <div className="bg-blue-600/20 text-blue-200 p-3 rounded mb-4">
+          {msg}
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        {/* Left: User Info */}
-        <Card title="User Information">
-          <div className="space-y-3">
-            <div>
-              <label className="text-gray-400 text-xs">Full Name</label>
-              <p className="text-white text-lg">{profile.full_name || "-"}</p>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs">Email</label>
-              <p className="text-white text-lg break-all">
-                {profile.email || "-"}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card title="Details">
+          {!editMode ? (
+            <div className="space-y-3 text-white">
+              <p>
+                <span className="text-gray-400 text-sm">Name:</span>{" "}
+                {profile.full_name}
               </p>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs">
-                CNIC / National ID
-              </label>
-              <p className="text-white text-lg">{profile.cnic || "N/A"}</p>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs">Wallet ID</label>
-              <p className="text-white text-xs font-mono break-all">
-                {profile.wallet_id}
+              <p>
+                <span className="text-gray-400 text-sm">Email:</span>{" "}
+                {profile.email}
               </p>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs">Public Key</label>
-              <p className="text-white text-xs font-mono break-all">
-                {publicKeyBase64 || "Not available"}
+              <p>
+                <span className="text-gray-400 text-sm">CNIC:</span>{" "}
+                {profile.cnic}
               </p>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs">Private Key</label>
-              <p className="text-amber-200 text-xs">
-                Stored encrypted on backend. Never shown in UI.
+              <p>
+                <span className="text-gray-400 text-sm">Wallet ID:</span>{" "}
+                <span className="font-mono text-xs break-all">
+                  {profile.wallet_id}
+                </span>
               </p>
-            </div>
+              <p>
+                <span className="text-gray-400 text-sm">Zakat:</span>{" "}
+                {profile.zakat_enabled ? "✅ Enabled" : "❌ Disabled"}
+              </p>
 
-            {!editMode && (
-              <button
-                onClick={() => setEditMode(true)}
-                className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-              >
-                Edit Profile
-              </button>
-            )}
-          </div>
-        </Card>
-
-        {/* Right: Edit form + Zakat */}
-        <div className="space-y-6">
-          {editMode && (
-            <Card title="Edit Profile">
-              <form onSubmit={handleUpdateProfile} className="space-y-4">
-                <div>
-                  <label className="block text-gray-300 text-sm mb-1">
-                    Full Name
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.full_name}
-                    onChange={(e) =>
-                      setFormData({ ...formData, full_name: e.target.value })
-                    }
-                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-300 text-sm mb-1">
-                    Email (re-verification required)
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) =>
-                      setFormData({ ...formData, email: e.target.value })
-                    }
-                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white"
-                  />
-                  <p className="text-xs text-slate-400 mt-1">
-                    In a full system this change would trigger a new OTP check.
-                  </p>
-                </div>
-
+              <div className="pt-4 flex gap-2">
                 <button
-                  type="submit"
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+                  onClick={() => setEditMode(true)}
+                  className="bg-blue-600 px-4 py-2 rounded text-sm hover:bg-blue-700"
                 >
-                  Save Changes
+                  Edit Details
+                </button>
+                <button
+                  onClick={() => setShowEmailChange(!showEmailChange)}
+                  className="bg-slate-600 px-4 py-2 rounded text-sm hover:bg-slate-700"
+                >
+                  Change Email
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleUpdateProfile} className="space-y-4">
+              <div>
+                <label className="text-gray-300 text-sm">Full Name</label>
+                <input
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full bg-slate-700 p-2 rounded text-white"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={zakatEnabled}
+                  onChange={(e) => setZakatEnabled(e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <label className="text-white">Enable Auto Zakat (2.5%)</label>
+              </div>
+              <div className="flex gap-2">
+                <button className="bg-green-600 px-4 py-2 rounded text-white text-sm hover:bg-green-700">
+                  Save
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditMode(false)}
-                  className="w-full bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded"
+                  className="bg-gray-600 px-4 py-2 rounded text-white text-sm hover:bg-gray-700"
                 >
                   Cancel
                 </button>
+              </div>
+            </form>
+          )}
+        </Card>
+
+        {showEmailChange && (
+          <Card title="Change Email (Re-verification)">
+            {emailStep === 1 ? (
+              <form onSubmit={handleRequestEmailChange} className="space-y-4">
+                <input
+                  type="email"
+                  placeholder="New Email Address"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  className="w-full bg-slate-700 p-2 rounded text-white"
+                  required
+                />
+                <button className="w-full bg-yellow-600 hover:bg-yellow-700 text-white p-2 rounded">
+                  Send OTP
+                </button>
               </form>
-            </Card>
-          )}
-
-          <Card title="Zakat Tracking">
-            <div className="space-y-2 text-sm text-slate-200">
-              <p>
-                Monthly 2.5% Zakat is deducted from your balance and transferred
-                to the Zakat Pool wallet as a special{" "}
-                <span className="font-mono text-xs">zakat_deduction</span>{" "}
-                transaction.
-              </p>
-              <p className="text-slate-400">
-                Automatic Zakat:{" "}
-                {zakatInfo.enabled ? "Enabled (demo)" : "Disabled"}
-              </p>
-              <p className="text-slate-400">
-                Last deduction:{" "}
-                {zakatInfo.last_deduction
-                  ? zakatInfo.last_deduction
-                  : "Not recorded in demo UI"}
-              </p>
-            </div>
+            ) : (
+              <form onSubmit={handleConfirmEmailChange} className="space-y-4">
+                <p className="text-sm text-gray-400">OTP sent to {newEmail}</p>
+                <input
+                  type="text"
+                  placeholder="Enter OTP"
+                  value={emailOtp}
+                  onChange={(e) => setEmailOtp(e.target.value)}
+                  className="w-full bg-slate-700 p-2 rounded text-white"
+                  required
+                />
+                <button className="w-full bg-green-600 hover:bg-green-700 text-white p-2 rounded">
+                  Verify & Update
+                </button>
+              </form>
+            )}
           </Card>
-        </div>
+        )}
       </div>
-
-      {/* Beneficiaries */}
-      <Card title="Beneficiaries">
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-white mb-3">
-            Add New Beneficiary
-          </h3>
-          <form onSubmit={handleAddBeneficiary} className="space-y-3">
-            <input
-              type="text"
-              placeholder="Beneficiary Wallet ID"
-              value={newBeneficiary.wallet_id}
-              onChange={(e) =>
-                setNewBeneficiary({
-                  ...newBeneficiary,
-                  wallet_id: e.target.value,
-                })
-              }
-              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-gray-500"
-            />
-            <input
-              type="text"
-              placeholder="Beneficiary Name"
-              value={newBeneficiary.name}
-              onChange={(e) =>
-                setNewBeneficiary({
-                  ...newBeneficiary,
-                  name: e.target.value,
-                })
-              }
-              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-gray-500"
-            />
-            <button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-            >
-              Add Beneficiary
-            </button>
-          </form>
-        </div>
-
-        <div>
-          <h3 className="text-lg font-semibold text-white mb-3">
-            Your Beneficiaries ({beneficiaries.length})
-          </h3>
-          {beneficiaries.length === 0 ? (
-            <p className="text-gray-400 text-sm">No beneficiaries added yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {beneficiaries.map((ben) => (
-                <div
-                  key={ben.id}
-                  className="bg-slate-700 p-4 rounded flex justify-between items-center"
-                >
-                  <div>
-                    <p className="text-white font-semibold">
-                      {ben.beneficiary_name}
-                    </p>
-                    <p className="text-gray-400 text-xs font-mono break-all">
-                      {ben.beneficiary_wallet_id}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleRemoveBeneficiary(ben.id)}
-                    className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </Card>
     </div>
   );
 }

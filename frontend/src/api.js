@@ -11,14 +11,18 @@ const api = axios.create({
 
 // Wallet endpoints
 export const walletAPI = {
-  create: () => api.post("/wallet/create"),
+  create: () => api.post("/wallet/create"), // Internal usage
   fund: (walletId, amount) =>
     api.post("/wallet/fund", { wallet_id: walletId, amount }),
-  getBalance: (walletId) => api.get(`/wallet/balance/${walletId}`),
+
+  // FIX: Backend expects query param ?wallet=...
+  getBalance: (walletId) => api.get(`/wallet/balance?wallet=${walletId}`),
   getHistory: (walletId, limit = 10) =>
-    api.get(`/wallet/history/${walletId}`, { params: { limit } }),
+    api.get(`/wallet/history?wallet=${walletId}&limit=${limit}`),
+
   signup: (email, fullName, cnic) =>
     api.post("/auth/signup", { email, full_name: fullName, cnic }),
+
   verifyOTP: (email, code, fullName, cnic, password) =>
     api.post("/auth/verify-otp", {
       email,
@@ -27,6 +31,7 @@ export const walletAPI = {
       cnic,
       password,
     }),
+
   login: (email, password) => api.post("/auth/login", { email, password }),
 };
 
@@ -47,41 +52,35 @@ export const blockchainAPI = {
 
 // Profile endpoints
 export const profileAPI = {
-  getProfile: (walletId) =>
-    api.get("/profile/get", { params: { wallet_id: walletId } }),
-  updateProfile: (userId, fullName, email) =>
+  // FIX: Backend expects query param ?wallet_id=...
+  getProfile: (walletId) => api.get(`/profile/get?wallet_id=${walletId}`),
+
+  // Update Name & Zakat Settings
+  updateProfile: (userId, fullName, zakatEnabled) =>
     api.post("/profile/update", {
       user_id: userId,
       full_name: fullName,
-      email,
+      zakat_enabled: zakatEnabled,
     }),
+
   getBeneficiaries: (userId) =>
-    api.get("/profile/beneficiaries", { params: { user_id: userId } }),
+    api.get(`/profile/beneficiaries?user_id=${userId}`),
+
   addBeneficiary: (userId, walletId, beneficiaryName) =>
     api.post("/profile/beneficiaries/add", {
       user_id: userId,
       wallet_id: walletId,
       beneficiary_name: beneficiaryName,
     }),
+
   removeBeneficiary: (beneficiaryId) =>
     api.post("/profile/beneficiaries/remove", {
       beneficiary_id: beneficiaryId,
     }),
 };
 
-// Auth endpoints
+// Auth endpoints (Email Change)
 export const authAPI = {
-  signup: (email, fullName, cnic) =>
-    api.post("/auth/signup", { email, full_name: fullName, cnic }),
-
-  verifyOTP: (email, code, fullName, cnic) =>
-    api.post("/auth/verify-otp", {
-      email,
-      code,
-      full_name: fullName,
-      cnic,
-    }),
-
   requestEmailChange: (userId, newEmail) =>
     api.post("/auth/request-email-change", {
       user_id: userId,
@@ -96,7 +95,6 @@ export const authAPI = {
     }),
 };
 
-// Health check
 export const healthCheck = () => api.get("/health");
 
 export default api;

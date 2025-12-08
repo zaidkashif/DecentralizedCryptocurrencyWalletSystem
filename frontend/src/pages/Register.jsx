@@ -3,8 +3,9 @@ import { useNavigate, Link } from "react-router-dom";
 import { walletAPI } from "../api";
 import Card from "../components/Card";
 
-function Register({ onRegisterSuccess }) {
-  const [step, setStep] = useState(1); // 1: email+CNIC, 2: OTP
+function Register() {
+  // Removed onRegisterSuccess prop, we redirect instead
+  const [step, setStep] = useState(1);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [cnic, setCNIC] = useState("");
@@ -13,63 +14,27 @@ function Register({ onRegisterSuccess }) {
   const [otp, setOTP] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState(""); // "success" | "error"
-  const [generatedOTP, setGeneratedOTP] = useState(""); // dev/demo
+  const [messageType, setMessageType] = useState("");
+  const [generatedOTP, setGeneratedOTP] = useState("");
   const navigate = useNavigate();
-
-  const validateEmail = (email) => {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  };
-
-  const validatePassword = (pwd) => {
-    if (pwd.length < 8) return "Password must be at least 8 characters";
-    if (!/[a-zA-Z]/.test(pwd)) return "Password must contain letters";
-    if (!/[0-9]/.test(pwd)) return "Password must contain numbers";
-    return null;
-  };
 
   const handleSubmitEmail = async (e) => {
     e.preventDefault();
-    setMessage("");
-    setMessageType("");
-
-    if (!fullName || !email || !cnic || !password || !confirmPassword) {
-      setMessageType("error");
-      setMessage("All fields are required.");
-      return;
-    }
-
-    if (!validateEmail(email)) {
-      setMessageType("error");
-      setMessage("Please enter a valid email address.");
-      return;
-    }
-
-    const pwdError = validatePassword(password);
-    if (pwdError) {
-      setMessageType("error");
-      setMessage(pwdError);
-      return;
-    }
-
     if (password !== confirmPassword) {
       setMessageType("error");
-      setMessage("Passwords do not match.");
+      setMessage("Passwords do not match");
       return;
     }
-
     try {
       setLoading(true);
       const res = await walletAPI.signup(email, fullName, cnic);
-
-      // backend returns otp for dev/demo
       setGeneratedOTP(res.data.otp || "");
       setMessageType("success");
-      setMessage("✓ OTP sent. Check your email. (Demo OTP shown below.)");
+      setMessage("OTP Sent! Check your email.");
       setStep(2);
     } catch (err) {
       setMessageType("error");
-      setMessage(err.response?.data || "Failed to send OTP. Please try again.");
+      setMessage(err.response?.data?.error || "Signup failed");
     } finally {
       setLoading(false);
     }
@@ -77,43 +42,19 @@ function Register({ onRegisterSuccess }) {
 
   const handleVerifyOTP = async (e) => {
     e.preventDefault();
-    setMessage("");
-    setMessageType("");
-
-    if (!otp) {
-      setMessageType("error");
-      setMessage("Please enter the OTP you received.");
-      return;
-    }
-
     try {
       setLoading(true);
-      const res = await walletAPI.verifyOTP(
-        email,
-        otp,
-        fullName,
-        cnic,
-        password
-      );
+      // Register the user
+      await walletAPI.verifyOTP(email, otp, fullName, cnic, password);
 
-      const { user_id, wallet_id, public_key } = res.data;
-
-      const wallet = {
-        user_id,
-        wallet_id,
-        public_key,
-        full_name: fullName,
-        email,
-        cnic,
-      };
-
-      onRegisterSuccess(wallet);
       setMessageType("success");
-      setMessage("✓ Account created successfully!");
-      setTimeout(() => navigate("/dashboard"), 1500);
+      setMessage("✓ Account verified! Redirecting to Login...");
+
+      // Redirect to Login to get the Private Key securely
+      setTimeout(() => navigate("/login-email"), 2000);
     } catch (err) {
       setMessageType("error");
-      setMessage(err.response?.data || "Invalid or expired OTP. Try again.");
+      setMessage(err.response?.data?.error || "Verification failed");
     } finally {
       setLoading(false);
     }
@@ -122,165 +63,91 @@ function Register({ onRegisterSuccess }) {
   return (
     <div className="flex items-center justify-center min-h-screen px-4">
       <div className="max-w-lg w-full">
-        <Card
-          title={
-            step === 1 ? "Create Account (Step 1/2)" : "Verify OTP (Step 2/2)"
-          }
-        >
+        <Card title={step === 1 ? "Create Account" : "Verify Email OTP"}>
           {message && (
             <div
               className={`mb-4 p-3 rounded text-sm ${
                 messageType === "success"
-                  ? "bg-green-500/20 border border-green-500 text-green-100"
-                  : "bg-red-500/20 border border-red-500 text-red-100"
+                  ? "bg-green-500/20 text-green-100"
+                  : "bg-red-500/20 text-red-100"
               }`}
             >
               {message}
               {generatedOTP && (
-                <span className="block text-xs mt-2 text-yellow-200 bg-yellow-900/20 p-2 rounded">
-                  📌 Demo Mode - Your OTP:{" "}
-                  <strong className="font-mono">{generatedOTP}</strong>
-                </span>
+                <div className="mt-1 font-mono text-yellow-300">
+                  Demo OTP: {generatedOTP}
+                </div>
               )}
             </div>
           )}
 
-          {step === 1 && (
+          {step === 1 ? (
             <form onSubmit={handleSubmitEmail} className="space-y-4">
-              <div>
-                <label className="block text-gray-300 mb-1 text-sm font-semibold">
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="John Doe"
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-300 mb-1 text-sm font-semibold">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-300 mb-1 text-sm font-semibold">
-                  CNIC / National ID
-                </label>
-                <input
-                  type="text"
-                  value={cnic}
-                  onChange={(e) => setCNIC(e.target.value)}
-                  placeholder="12345-6789012-3"
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-300 mb-1 text-sm font-semibold">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Min 8 chars, letters + numbers"
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                />
-                <p className="text-xs text-slate-400 mt-1">
-                  • At least 8 characters • Letters & numbers required
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-gray-300 mb-1 text-sm font-semibold">
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Re-enter your password"
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
+              <input
+                className="w-full bg-slate-700 p-3 rounded text-white"
+                placeholder="Full Name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                required
+              />
+              <input
+                className="w-full bg-slate-700 p-3 rounded text-white"
+                placeholder="Email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+              <input
+                className="w-full bg-slate-700 p-3 rounded text-white"
+                placeholder="CNIC"
+                value={cnic}
+                onChange={(e) => setCNIC(e.target.value)}
+                required
+              />
+              <input
+                className="w-full bg-slate-700 p-3 rounded text-white"
+                placeholder="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <input
+                className="w-full bg-slate-700 p-3 rounded text-white"
+                placeholder="Confirm Password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
               <button
-                type="submit"
                 disabled={loading}
-                className={`w-full font-semibold py-3 rounded-lg transition-all ${
-                  loading
-                    ? "bg-blue-500/50 text-slate-300 cursor-not-allowed"
-                    : "bg-blue-600 hover:bg-blue-700 text-white"
-                }`}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded font-bold"
               >
-                {loading ? "⏳ Sending OTP..." : "→ Send OTP to Email"}
+                {loading ? "Processing..." : "Next →"}
               </button>
-
-              <p className="text-xs text-center text-slate-400 mt-4">
-                Already have an account?{" "}
-                <Link
-                  to="/login-email"
-                  className="text-blue-400 hover:underline"
-                >
-                  Login here
+              <div className="text-center mt-2">
+                <Link to="/login" className="text-sm text-blue-400">
+                  Already have an account?
                 </Link>
-              </p>
-            </form>
-          )}
-
-          {step === 2 && (
-            <form onSubmit={handleVerifyOTP} className="space-y-4">
-              <div>
-                <label className="block text-gray-300 mb-1 text-sm font-semibold">
-                  Enter OTP Code
-                </label>
-                <input
-                  type="text"
-                  value={otp}
-                  onChange={(e) => setOTP(e.target.value.slice(0, 6))}
-                  placeholder="000000"
-                  maxLength="6"
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-center text-2xl tracking-widest font-mono"
-                />
-                <p className="text-xs text-slate-400 mt-2">
-                  A 6-digit code has been sent to <strong>{email}</strong>
-                </p>
               </div>
-
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyOTP} className="space-y-4">
+              <input
+                className="w-full bg-slate-700 p-3 rounded text-white text-center text-2xl tracking-widest"
+                placeholder="OTP Code"
+                value={otp}
+                onChange={(e) => setOTP(e.target.value)}
+                maxLength={6}
+                required
+              />
               <button
-                type="submit"
                 disabled={loading}
-                className={`w-full font-semibold py-3 rounded-lg transition-all ${
-                  loading
-                    ? "bg-green-500/50 text-slate-300 cursor-not-allowed"
-                    : "bg-green-600 hover:bg-green-700 text-white"
-                }`}
+                className="w-full bg-green-600 hover:bg-green-700 text-white p-3 rounded font-bold"
               >
-                {loading ? "⏳ Verifying..." : "✓ Verify & Create Account"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setStep(1);
-                  setOTP("");
-                  setGeneratedOTP("");
-                  setMessage("");
-                }}
-                className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 rounded-lg transition-all"
-              >
-                ← Back to Form
+                {loading ? "Verifying..." : "Verify & Create Account"}
               </button>
             </form>
           )}

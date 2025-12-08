@@ -20,6 +20,7 @@ import (
 	"blockchain-wallet/pkg/scheduler"
 	"blockchain-wallet/pkg/tx"
 	"blockchain-wallet/pkg/utxo"
+	"blockchain-wallet/pkg/email"
 )
 
 var utxoMgr = utxo.NewManager()
@@ -335,9 +336,16 @@ type SignupReq struct {
 	CNIC     string `json:"cnic"`
 }
 
+// Don't forget to import "blockchain-wallet/pkg/email" at the top!
+
 func signupHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || dbClient == nil {
-		http.Error(w, "method not allowed or DB unavailable", http.StatusMethodNotAllowed)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+    // Check DB connection to avoid 404/Crash
+	if dbClient == nil {
+		http.Error(w, "Database connection failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -347,24 +355,36 @@ func signupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate 6-digit OTP
+	// 1. Generate Code
 	code, err := generateOTP()
 	if err != nil {
 		http.Error(w, "failed to generate otp", http.StatusInternalServerError)
 		return
 	}
 	expiresAt := time.Now().Add(10 * time.Minute)
+
+	// 2. Store in DB
 	if err := dbClient.InsertOTP(context.Background(), sr.Email, code, expiresAt); err != nil {
 		http.Error(w, "failed to store otp: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// NOTE: For development/demo we return the OTP in the response. In production, send via email.
-	log.Printf("OTP for %s = %s (expires %s)", sr.Email, code, expiresAt.Format(time.RFC3339))
+	// 3. Send REAL Email (This replaces the old logic)
+	go func() {
+		// Use the email package we just created
+		if err := email.SendOTP(sr.Email, code); err != nil {
+			log.Printf("Failed to send email to %s: %v", sr.Email, err)
+		} else {
+			log.Printf("✓ Email sent to %s", sr.Email)
+		}
+	}()
+
+	// 4. Return success WITHOUT the OTP
+    // The frontend will receive this, see no 'otp' field, and won't show the yellow demo box.
 	writeJSON(w, map[string]interface{}{
-		"status": "otp_sent",
-		"email":  sr.Email,
-		"otp":    code,
+		"status":  "otp_sent",
+		"email":   sr.Email,
+		"message": "OTP sent to your email inbox.",
 	})
 }
 type EmailChangeRequest struct {
@@ -521,21 +541,29 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get encrypted private key
+	// Get encrypted private key and DECRYPT it for the frontend
 	privKeyEnc := walletRow["private_key_encrypted"].([]byte)
 	pubKey := walletRow["public_key"].([]byte)
 	walletID := walletRow["wallet_id"].(string)
 
-	// Return user profile data
+	// Decrypt the private key using the Server Master Key
+	decryptedPrivKey, err := crypto.DecryptPrivateKey(privKeyEnc)
+	if err != nil {
+		log.Printf("Error decrypting private key for user %s: %v", userID, err)
+		http.Error(w, "failed to decrypt wallet key", http.StatusInternalServerError)
+		return
+	}
+
+	// Return user profile data with DECRYPTED private key
 	writeJSON(w, map[string]interface{}{
-		"user_id":               userID,
-		"wallet_id":             walletID,
-		"email":                 userRow["email"],
-		"full_name":             userRow["full_name"],
-		"cnic":                  userRow["cnic"],
-		"public_key":            base64.StdEncoding.EncodeToString(pubKey),
-		"private_key_encrypted": base64.StdEncoding.EncodeToString(privKeyEnc),
-		"balance":               walletRow["balance"],
+		"user_id":     userID,
+		"wallet_id":   walletID,
+		"email":       userRow["email"],
+		"full_name":   userRow["full_name"],
+		"cnic":        userRow["cnic"],
+		"public_key":  base64.StdEncoding.EncodeToString(pubKey),
+		"private_key": base64.StdEncoding.EncodeToString(decryptedPrivKey), // Send Raw Key
+		"balance":     walletRow["balance"],
 	})
 }
 

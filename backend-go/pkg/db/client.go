@@ -42,6 +42,7 @@ func (c *Client) Close() error {
 // InsertUser inserts a new user
 func (c *Client) InsertUser(ctx context.Context, email, fullName, cnic string) (string, error) {
 	var userID string
+	// zakat_enabled defaults to TRUE in schema
 	err := c.db.QueryRowContext(
 		ctx,
 		"INSERT INTO users (email, full_name, cnic) VALUES ($1, $2, $3) RETURNING id",
@@ -75,10 +76,10 @@ func (c *Client) GetWalletByID(ctx context.Context, walletID string) (map[string
 		return nil, err
 	}
 	return map[string]interface{}{
-		"id":        id,
-		"wallet_id": wid,
+		"id":         id,
+		"wallet_id":  wid,
 		"public_key": pubKey,
-		"balance":   balance,
+		"balance":    balance,
 	}, nil
 }
 
@@ -131,11 +132,12 @@ func (c *Client) GetBalance(ctx context.Context, walletID string) (int64, error)
 }
 
 // InsertTransaction inserts a new transaction
-func (c *Client) InsertTransaction(ctx context.Context, txID, senderID, receiverID string, amount int64, note string, sig []byte) error {
+func (c *Client) InsertTransaction(ctx context.Context, txID, senderID, receiverID string, amount int64, note string, sig []byte, senderPub []byte, ip string) error {
+	// Updates for new schema: sender_public_key, ip_address
 	_, err := c.db.ExecContext(
 		ctx,
-		"INSERT INTO transactions (tx_id, sender_wallet_id, receiver_wallet_id, amount, note, signature) VALUES ($1, $2, $3, $4, $5, $6)",
-		txID, senderID, receiverID, amount, note, sig,
+		"INSERT INTO transactions (tx_id, sender_wallet_id, receiver_wallet_id, amount, note, signature, sender_public_key, ip_address) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+		txID, senderID, receiverID, amount, note, sig, senderPub, ip,
 	)
 	return err
 }
@@ -184,13 +186,13 @@ func (c *Client) GetTransactionHistory(ctx context.Context, walletID string, lim
 			return nil, err
 		}
 		txs = append(txs, map[string]interface{}{
-			"tx_id":            txID,
-			"sender_wallet_id": senderID,
+			"tx_id":              txID,
+			"sender_wallet_id":   senderID,
 			"receiver_wallet_id": receiverID,
-			"amount":           amount,
-			"tx_type":          txType,
-			"status":           status,
-			"created_at":       createdAt,
+			"amount":             amount,
+			"tx_type":            txType,
+			"status":             status,
+			"created_at":         createdAt,
 		})
 	}
 	return txs, rows.Err()
@@ -220,12 +222,12 @@ func (c *Client) GetAllWallets(ctx context.Context) ([]map[string]interface{}, e
 			return nil, err
 		}
 		wallets = append(wallets, map[string]interface{}{
-			"id":                   id,
-			"user_id":              userID,
-			"wallet_id":            walletID,
-			"balance":              balance,
+			"id":                  id,
+			"user_id":             userID,
+			"wallet_id":           walletID,
+			"balance":             balance,
 			"zakat_last_deducted": zakatLastDeducted,
-			"created_at":           createdAt,
+			"created_at":          createdAt,
 		})
 	}
 	return wallets, rows.Err()
@@ -247,34 +249,19 @@ func (c *Client) InsertBlock(ctx context.Context, block interface{}) error {
 		return fmt.Errorf("invalid block type")
 	}
 
+	// Updated for new schema: block_index added
 	_, err := c.db.ExecContext(
 		ctx,
-		`INSERT INTO blocks (block_hash, previous_hash, nonce, difficulty, mined_at) 
-		 VALUES ($1, $2, $3, $4, NOW())`,
-		b.Hash, b.PreviousHash, b.Nonce, b.Difficulty,
+		`INSERT INTO blocks (block_index, block_hash, previous_hash, nonce, difficulty, mined_at) 
+		 VALUES ($1, $2, $3, $4, $5, NOW())`,
+		b.Index, b.Hash, b.PreviousHash, b.Nonce, b.Difficulty,
 	)
-	return err
-}
-
-// EnsureOTPsTable creates otps table if not exists
-func (c *Client) EnsureOTPsTable(ctx context.Context) error {
-	_, err := c.db.ExecContext(ctx, `
-	CREATE TABLE IF NOT EXISTS otps (
-		id SERIAL PRIMARY KEY,
-		email TEXT NOT NULL,
-		code TEXT NOT NULL,
-		expires_at TIMESTAMP NOT NULL,
-		used BOOLEAN DEFAULT FALSE,
-		created_at TIMESTAMP DEFAULT NOW()
-	)`) 
 	return err
 }
 
 // InsertOTP inserts an OTP code for an email
 func (c *Client) InsertOTP(ctx context.Context, email, code string, expiresAt time.Time) error {
-	if err := c.EnsureOTPsTable(ctx); err != nil {
-		return err
-	}
+	// Removed EnsureOTPsTable to rely on Schema
 	_, err := c.db.ExecContext(ctx,
 		"INSERT INTO otps (email, code, expires_at) VALUES ($1, $2, $3)",
 		email, code, expiresAt,
@@ -284,9 +271,6 @@ func (c *Client) InsertOTP(ctx context.Context, email, code string, expiresAt ti
 
 // VerifyOTP checks code for email and marks it used if valid
 func (c *Client) VerifyOTP(ctx context.Context, email, code string) (bool, error) {
-	if err := c.EnsureOTPsTable(ctx); err != nil {
-		return false, err
-	}
 	// Check code exists, not used, and not expired
 	var id int
 	err := c.db.QueryRowContext(ctx,
@@ -307,7 +291,6 @@ func (c *Client) VerifyOTP(ctx context.Context, email, code string) (bool, error
 	return true, nil
 }
 
-// GetUserByWalletID retrieves user profile given wallet_id
 // GetUserByWalletID retrieves user profile given wallet_id
 func (c *Client) GetUserByWalletID(ctx context.Context, walletID string) (map[string]interface{}, error) {
 	row := c.db.QueryRowContext(ctx,
@@ -345,7 +328,6 @@ func (c *Client) GetUserByWalletID(ctx context.Context, walletID string) (map[st
 	}, nil
 }
 
-
 // UpdateUserProfile updates user name and email
 func (c *Client) UpdateUserProfile(ctx context.Context, userID, fullName, email string) error {
 	_, err := c.db.ExecContext(ctx,
@@ -355,7 +337,7 @@ func (c *Client) UpdateUserProfile(ctx context.Context, userID, fullName, email 
 	return err
 }
 
-// UpdateUserNameAndSettings updates full_name and simple security flags
+// UpdateUserNameAndSettings updates full_name and zakat_enabled
 func (c *Client) UpdateUserNameAndSettings(ctx context.Context, userID, fullName string, zakatEnabled bool) error {
 	_, err := c.db.ExecContext(ctx,
 		"UPDATE users SET full_name=$1, zakat_enabled=$2, updated_at=NOW() WHERE id=$3",
@@ -433,19 +415,19 @@ func (c *Client) GetUserByEmail(ctx context.Context, email string) (map[string]i
 		"SELECT id, email, full_name, cnic, password_hash FROM users WHERE email=$1",
 		email,
 	)
-	
+
 	var id, userEmail, fullName, cnic, passwordHash string
 	err := row.Scan(&id, &userEmail, &fullName, &cnic, &passwordHash)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]interface{}{
-		"id":             id,
-		"email":          userEmail,
-		"full_name":      fullName,
-		"cnic":           cnic,
-		"password_hash":  passwordHash,
+		"id":            id,
+		"email":         userEmail,
+		"full_name":     fullName,
+		"cnic":          cnic,
+		"password_hash": passwordHash,
 	}, nil
 }
 
@@ -455,16 +437,16 @@ func (c *Client) GetUserWalletByUserID(ctx context.Context, userID string) (map[
 		"SELECT id, wallet_id, public_key, private_key_encrypted, balance FROM wallets WHERE user_id=$1",
 		userID,
 	)
-	
+
 	var id, walletID string
 	var pubKey, privKeyEnc []byte
 	var balance int64
-	
+
 	err := row.Scan(&id, &walletID, &pubKey, &privKeyEnc, &balance)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]interface{}{
 		"id":                    id,
 		"wallet_id":             walletID,
@@ -473,4 +455,3 @@ func (c *Client) GetUserWalletByUserID(ctx context.Context, userID string) (map[
 		"balance":               balance,
 	}, nil
 }
-
