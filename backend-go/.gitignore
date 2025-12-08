@@ -1,0 +1,24 @@
+# Go build / runtime
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Output / temp
+coverage.out
+*.out
+
+# Vendor
+vendor/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.*
+
+# macOS
+.DS_Store
