@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -17,10 +19,10 @@ import (
 	"blockchain-wallet/pkg/blockchain"
 	"blockchain-wallet/pkg/crypto"
 	"blockchain-wallet/pkg/db"
+	"blockchain-wallet/pkg/email" // <--- ENSURE THIS IMPORT EXISTS
 	"blockchain-wallet/pkg/scheduler"
 	"blockchain-wallet/pkg/tx"
 	"blockchain-wallet/pkg/utxo"
-	"blockchain-wallet/pkg/email"
 )
 
 var utxoMgr = utxo.NewManager()
@@ -29,21 +31,32 @@ var bc *blockchain.Blockchain
 var zakatScheduler *scheduler.ZakatScheduler
 
 func init() {
-	// Load .env file
-	_ = godotenv.Load()
+	// 1. Load .env file
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("⚠️  Warning: .env file not found. Ensure it is in the same directory as the binary.")
+	}
 
-	var err error
+	// 2. Debug Email Settings
+	emailParams := os.Getenv("SMTP_EMAIL")
+	emailPass := os.Getenv("SMTP_PASSWORD")
+	if emailParams != "" && len(emailPass) > 0 {
+		log.Printf("📧 Email Config Loaded: Sending as %s", emailParams)
+	} else {
+		log.Println("❌ Email Config MISSING in .env! Emails will fail.")
+	}
+
+	// 3. Connect DB
 	dbClient, err = db.NewClient(context.Background())
 	if err != nil {
-		log.Printf("Warning: DB connection failed: %v. Using in-memory UTXO only.", err)
-		dbClient = nil
+		log.Printf("❌ CRITICAL: DB connection failed: %v", err)
+		dbClient = nil // Explicitly nil so handlers fail gracefully
 	} else {
 		log.Printf("✓ Database connected successfully")
 	}
-	// Initialize blockchain with difficulty 5 (starts with "00000")
-	bc = blockchain.NewBlockchain(5)
 
-	// Initialize Zakat scheduler
+	// 4. Init Blockchain & Scheduler
+	bc = blockchain.NewBlockchain(5)
 	zakatScheduler = scheduler.NewZakatScheduler(dbClient, bc, utxoMgr, "zakat-pool-system")
 }
 
@@ -52,12 +65,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
 		next.ServeHTTP(w, r)
 	})
 }
@@ -72,38 +83,32 @@ func main() {
 		}
 	}()
 
-	// Start Zakat scheduler if DB is connected
 	if dbClient != nil {
 		ctx := context.Background()
 		zakatScheduler.Start(ctx)
 	}
 
 	mux := http.NewServeMux()
+	
+	// --- AUTH ENDPOINTS ---
+	mux.HandleFunc("/auth/signup", signupHandler)
+	mux.HandleFunc("/auth/verify-otp", verifyOtpHandler)
+	mux.HandleFunc("/auth/login", loginHandler)
+	
+	// --- OTHER ENDPOINTS ---
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/wallet/create", createWalletHandler)
 	mux.HandleFunc("/wallet/fund", fundHandler)
 	mux.HandleFunc("/wallet/balance", balanceHandler)
 	mux.HandleFunc("/tx/submit", txSubmitHandler)
-
-	// Auth endpoints (registered when DB available below)
-
-	// Blockchain endpoints
+	mux.HandleFunc("/tx/sign-and-submit", txSignAndSubmitHandler)
+	mux.HandleFunc("/tx/details", txDetailsHandler)
 	mux.HandleFunc("/blockchain/mine", mineHandler)
 	mux.HandleFunc("/blockchain/blocks", blocksHandler)
 	mux.HandleFunc("/blockchain/validate", validateHandler)
 	mux.HandleFunc("/blockchain/pending", pendingHandler)
 
-	// Zakat endpoints (if scheduler available)
-	if zakatScheduler != nil {
-		mux.HandleFunc("/zakat/trigger", zakatTriggerHandler)
-		mux.HandleFunc("/zakat/pool-balance", zakatPoolBalanceHandler)
-	}
-
-	// DB endpoints (if available)
 	if dbClient != nil {
-		mux.HandleFunc("/auth/signup", signupHandler)
-		mux.HandleFunc("/auth/verify-otp", verifyOtpHandler)
-		mux.HandleFunc("/auth/login", loginHandler)
 		mux.HandleFunc("/profile/get", profileGetHandler)
 		mux.HandleFunc("/profile/update", profileUpdateHandler)
 		mux.HandleFunc("/profile/beneficiaries", beneficiariesListHandler)
@@ -112,11 +117,16 @@ func main() {
 		mux.HandleFunc("/wallet/history", transactionHistoryHandler)
 		mux.HandleFunc("/admin/logs", logsHandler)
 		mux.HandleFunc("/auth/request-email-change", requestEmailChangeHandler)
-	    mux.HandleFunc("/auth/confirm-email-change", confirmEmailChangeHandler)
+		mux.HandleFunc("/auth/confirm-email-change", confirmEmailChangeHandler)
+	}
+
+	if zakatScheduler != nil {
+		mux.HandleFunc("/zakat/trigger", zakatTriggerHandler)
+		mux.HandleFunc("/zakat/pool-balance", zakatPoolBalanceHandler)
 	}
 
 	addr := ":8080"
-	log.Printf("server listening on %s", addr)
+	log.Printf("🚀 Server listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, corsMiddleware(mux)))
 }
 
@@ -196,6 +206,8 @@ func balanceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var bal int64
+	var utxoList []map[string]interface{}
+	
 	if dbClient != nil {
 		var err error
 		bal, err = dbClient.GetBalance(context.Background(), wallet)
@@ -203,11 +215,32 @@ func balanceHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Warning: failed to get balance from DB: %v", err)
 			bal = utxoMgr.Balance(wallet)
 		}
+		
+		// Get UTXOs from database
+		dbUtxos, err := dbClient.GetUnspentUTXOs(context.Background(), wallet)
+		if err != nil {
+			log.Printf("Warning: failed to get UTXOs from DB: %v", err)
+		} else {
+			utxoList = dbUtxos
+		}
 	} else {
 		bal = utxoMgr.Balance(wallet)
+		
+		// Get UTXOs from in-memory manager
+		memUtxos := utxoMgr.GetUnspentByOwner(wallet)
+		for _, u := range memUtxos {
+			utxoList = append(utxoList, map[string]interface{}{
+				"utxo_id": u.ID,
+				"amount":  u.Amount,
+			})
+		}
 	}
 
-	writeJSON(w, map[string]interface{}{"wallet": wallet, "balance": bal})
+	writeJSON(w, map[string]interface{}{
+		"wallet":  wallet,
+		"balance": bal,
+		"utxos":   utxoList,
+	})
 }
 
 type APITx struct {
@@ -309,7 +342,7 @@ func txSubmitHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if dbClient != nil {
-		if err := dbClient.InsertTransaction(context.Background(), txx.ID, txx.SenderID, txx.ReceiverID, txx.Amount, txx.Note, txx.Signature); err != nil {
+		if err := dbClient.InsertTransaction(context.Background(), txx.ID, txx.SenderID, txx.ReceiverID, txx.Amount, txx.Note, txx.Signature, txx.SenderPub, r.RemoteAddr); err != nil {
 			log.Printf("Warning: failed to log transaction in DB: %v", err)
 		}
 		if err := dbClient.InsertLog(context.Background(), txx.SenderID, "tx_sent", "Transfer to "+txx.ReceiverID, "confirmed", r.RemoteAddr); err != nil {
@@ -321,6 +354,217 @@ func txSubmitHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Add transaction to pending pool for mining
 	bc.AddPendingTransaction(txx.ID)
+}
+
+// APITxWithPrivKey is used for the sign-and-submit endpoint where client sends private key
+type APITxWithPrivKey struct {
+	SenderID   string `json:"sender_id"`
+	ReceiverID string `json:"receiver_id"`
+	Amount     int64  `json:"amount"`
+	Note       string `json:"note"`
+	SenderPub  string `json:"sender_pub"`  // base64
+	SenderPriv string `json:"sender_priv"` // base64
+}
+
+// txSignAndSubmitHandler signs the transaction server-side and submits it
+// This is a convenience endpoint that handles signing for the client
+func txSignAndSubmitHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	var req APITxWithPrivKey
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Decode private key
+	privBytes, err := base64.StdEncoding.DecodeString(req.SenderPriv)
+	if err != nil {
+		http.Error(w, "invalid sender_priv: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Decode public key
+	pubBytes, err := base64.StdEncoding.DecodeString(req.SenderPub)
+	if err != nil {
+		http.Error(w, "invalid sender_pub: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Verify that the private key corresponds to the public key
+	if len(privBytes) != ed25519.PrivateKeySize {
+		http.Error(w, "invalid private key size", http.StatusBadRequest)
+		return
+	}
+	
+	privKey := ed25519.PrivateKey(privBytes)
+	derivedPub := privKey.Public().(ed25519.PublicKey)
+	
+	if !bytes.Equal(derivedPub, pubBytes) {
+		http.Error(w, "private key does not match public key", http.StatusBadRequest)
+		return
+	}
+	
+	// Verify wallet ID matches the public key
+	expectedWalletID := crypto.WalletIDFromPub(pubBytes)
+	if expectedWalletID != req.SenderID {
+		http.Error(w, "sender_id does not match public key", http.StatusBadRequest)
+		return
+	}
+	
+	// Get UTXOs for the sender - prefer database over in-memory
+	var selectedInputs []string
+	var totalInput int64
+	
+	if dbClient != nil {
+		// Use database UTXOs (persistent)
+		dbUtxos, err := dbClient.GetUnspentUTXOs(context.Background(), req.SenderID)
+		if err != nil {
+			log.Printf("Warning: failed to get UTXOs from DB: %v", err)
+		}
+		if len(dbUtxos) == 0 {
+			http.Error(w, "no UTXOs available for sender", http.StatusBadRequest)
+			return
+		}
+		
+		// Select UTXOs to cover the amount
+		for _, u := range dbUtxos {
+			utxoID := u["utxo_id"].(string)
+			amount := u["amount"].(int64)
+			selectedInputs = append(selectedInputs, utxoID)
+			totalInput += amount
+			if totalInput >= req.Amount {
+				break
+			}
+		}
+	} else {
+		// Fallback to in-memory UTXOs
+		utxos := utxoMgr.GetUnspentByOwner(req.SenderID)
+		if len(utxos) == 0 {
+			http.Error(w, "no UTXOs available for sender", http.StatusBadRequest)
+			return
+		}
+		
+		// Select UTXOs to cover the amount
+		for _, u := range utxos {
+			selectedInputs = append(selectedInputs, u.ID)
+			totalInput += u.Amount
+			if totalInput >= req.Amount {
+				break
+			}
+		}
+	}
+	
+	if totalInput < req.Amount {
+		http.Error(w, fmt.Sprintf("insufficient funds: have %d, need %d", totalInput, req.Amount), http.StatusBadRequest)
+		return
+	}
+	
+	// Create the transaction
+	txx := tx.NewTransaction(req.SenderID, req.ReceiverID, req.Amount, req.Note, selectedInputs)
+	txx.SenderPub = pubBytes
+	
+	// Sign the transaction payload
+	payload := txx.Payload()
+	signature := crypto.SignPayload(privKey, payload)
+	txx.Signature = signature
+	
+	// Verify signature before proceeding
+	if !crypto.VerifySignature(pubBytes, payload, signature) {
+		http.Error(w, "internal error: signature verification failed", http.StatusInternalServerError)
+		return
+	}
+	
+	// Spend inputs - use DB if available, otherwise in-memory
+	for _, in := range txx.InputUTXOs {
+		if dbClient != nil {
+			// Spend in database (primary)
+			if err := dbClient.SpendUTXO(context.Background(), in, txx.ID); err != nil {
+				http.Error(w, "failed to spend input in DB: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// Fallback to in-memory
+			if err := utxoMgr.Spend(in, txx.SenderID); err != nil {
+				http.Error(w, "failed to spend input: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+	
+	// Create receiver UTXO
+	receiverUtxoID := txx.ID + "_recv"
+	if dbClient != nil {
+		if err := dbClient.InsertUTXO(context.Background(), receiverUtxoID, txx.ReceiverID, txx.Amount); err != nil {
+			log.Printf("Warning: failed to insert receiver UTXO in DB: %v", err)
+		}
+	}
+	utxoMgr.AddUTXO(txx.ReceiverID, txx.Amount)
+	
+	// Create change UTXO if any
+	change := totalInput - txx.Amount
+	if change > 0 {
+		changeUtxoID := txx.ID + "_change"
+		if dbClient != nil {
+			if err := dbClient.InsertUTXO(context.Background(), changeUtxoID, txx.SenderID, change); err != nil {
+				log.Printf("Warning: failed to insert change UTXO in DB: %v", err)
+			}
+		}
+		utxoMgr.AddUTXO(txx.SenderID, change)
+	}
+	
+	// Log transaction
+	if dbClient != nil {
+		if err := dbClient.InsertTransaction(context.Background(), txx.ID, txx.SenderID, txx.ReceiverID, txx.Amount, txx.Note, txx.Signature, txx.SenderPub, r.RemoteAddr); err != nil {
+			log.Printf("Warning: failed to log transaction in DB: %v", err)
+		}
+		if err := dbClient.InsertLog(context.Background(), txx.SenderID, "tx_sent", "Transfer to "+txx.ReceiverID, "confirmed", r.RemoteAddr); err != nil {
+			log.Printf("Warning: failed to log action in DB: %v", err)
+		}
+	}
+	
+	writeJSON(w, map[string]interface{}{"status": "accepted", "txid": txx.ID})
+	
+	// Add transaction to pending pool for mining
+	bc.AddPendingTransaction(txx.ID)
+}
+
+// txDetailsHandler returns full transaction details including signature
+func txDetailsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	txID := r.URL.Query().Get("tx_id")
+	if txID == "" {
+		http.Error(w, "missing tx_id param", http.StatusBadRequest)
+		return
+	}
+	
+	if dbClient == nil {
+		http.Error(w, "database not available", http.StatusServiceUnavailable)
+		return
+	}
+	
+	txData, err := dbClient.GetTransactionByID(context.Background(), txID)
+	if err != nil {
+		http.Error(w, "transaction not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	
+	// Convert signature and public key to base64 for frontend display
+	if sig, ok := txData["signature"].([]byte); ok && sig != nil {
+		txData["signature_base64"] = base64.StdEncoding.EncodeToString(sig)
+	}
+	if pub, ok := txData["sender_public_key"].([]byte); ok && pub != nil {
+		txData["sender_pub_base64"] = base64.StdEncoding.EncodeToString(pub)
+	}
+	
+	writeJSON(w, txData)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -343,7 +587,6 @@ func signupHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-    // Check DB connection to avoid 404/Crash
 	if dbClient == nil {
 		http.Error(w, "Database connection failed", http.StatusInternalServerError)
 		return
@@ -355,7 +598,6 @@ func signupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Generate Code
 	code, err := generateOTP()
 	if err != nil {
 		http.Error(w, "failed to generate otp", http.StatusInternalServerError)
@@ -363,28 +605,25 @@ func signupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := time.Now().Add(10 * time.Minute)
 
-	// 2. Store in DB
 	if err := dbClient.InsertOTP(context.Background(), sr.Email, code, expiresAt); err != nil {
 		http.Error(w, "failed to store otp: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 3. Send REAL Email (This replaces the old logic)
-	go func() {
-		// Use the email package we just created
-		if err := email.SendOTP(sr.Email, code); err != nil {
-			log.Printf("Failed to send email to %s: %v", sr.Email, err)
-		} else {
-			log.Printf("✓ Email sent to %s", sr.Email)
-		}
-	}()
+	// REAL EMAIL SENDING
+	if err := email.SendOTP(sr.Email, code); err != nil {
+		log.Printf("❌ EMAIL FAILED to %s: %v", sr.Email, err)
+		http.Error(w, "Failed to send email. Check backend logs.", http.StatusInternalServerError)
+		return
+	}
 
-	// 4. Return success WITHOUT the OTP
-    // The frontend will receive this, see no 'otp' field, and won't show the yellow demo box.
+	log.Printf("✓ Email sent successfully to %s", sr.Email)
+
 	writeJSON(w, map[string]interface{}{
-		"status":  "otp_sent",
-		"email":   sr.Email,
+		"status": "otp_sent",
+		"email":  sr.Email,
 		"message": "OTP sent to your email inbox.",
+		// NO "otp" field here!
 	})
 }
 type EmailChangeRequest struct {

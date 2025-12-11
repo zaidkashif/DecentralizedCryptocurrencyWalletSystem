@@ -1,9 +1,14 @@
 import React, { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { walletAPI } from "../api";
+import { useNavigate } from "react-router-dom";
 
-function LoginEmail({ onLogin }) {
-  const [email, setEmail] = useState("");
+// Hardcoded admin credentials (in production, this should be server-side)
+const ADMIN_CREDENTIALS = {
+  username: "admin",
+  password: "admin123",
+};
+
+function AdminLogin({ onAdminLogin }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -15,59 +20,39 @@ function LoginEmail({ onLogin }) {
     setError("");
     setLoading(true);
 
-    try {
-      const res = await walletAPI.login(email, password);
+    // Simulate network delay
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const {
-        user_id,
-        wallet_id,
-        public_key,
-        private_key,
-        full_name,
-        cnic,
-        balance,
-      } = res.data;
-
-      if (!private_key) {
-        throw new Error("Backend did not return a private key.");
-      }
-
-      const wallet = {
-        user_id,
-        wallet_id,
-        public_key,
-        private_key,
-        full_name,
-        email,
-        cnic,
-        balance,
+    if (
+      username === ADMIN_CREDENTIALS.username &&
+      password === ADMIN_CREDENTIALS.password
+    ) {
+      const adminData = {
+        username,
+        role: "admin",
+        loginTime: new Date().toISOString(),
       };
-
-      localStorage.setItem("wallet", JSON.stringify(wallet));
-      onLogin(wallet);
-      navigate("/dashboard");
-    } catch (err) {
-      console.error(err);
-      setError(
-        err.response?.data || "Login failed. Please check your credentials."
-      );
-    } finally {
-      setLoading(false);
+      onAdminLogin(adminData);
+      navigate("/admin");
+    } else {
+      setError("Invalid admin credentials");
     }
+
+    setLoading(false);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-red-900/20 to-slate-900 flex items-center justify-center px-4 py-12">
       {/* Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/3 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-1/4 right-1/3 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl"></div>
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-red-500/10 rounded-full blur-3xl"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl"></div>
       </div>
 
       <div className="max-w-md w-full relative">
-        {/* Header */}
+        {/* Logo & Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl shadow-lg shadow-blue-500/30 mb-6">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-red-600 to-orange-600 rounded-2xl shadow-lg shadow-red-500/30 mb-6">
             <svg
               className="w-8 h-8 text-white"
               fill="none"
@@ -78,16 +63,40 @@ function LoginEmail({ onLogin }) {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
               />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
-          <p className="text-slate-400">Sign in with your email and password</p>
+          <h1 className="text-3xl font-bold text-white mb-2">Admin Portal</h1>
+          <p className="text-slate-400">
+            Restricted access for system administrators
+          </p>
         </div>
 
         {/* Main Card */}
-        <div className="bg-slate-800/50 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl p-8">
+        <div className="bg-slate-800/50 backdrop-blur-xl border border-red-500/20 rounded-2xl shadow-2xl p-8">
+          {/* Warning Banner */}
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+            <div className="flex items-center gap-3">
+              <svg
+                className="w-5 h-5 text-red-400 flex-shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+              <p className="text-red-300 text-sm">
+                Authorized personnel only. All access attempts are logged.
+              </p>
+            </div>
+          </div>
+
           {/* Error Alert */}
           {error && (
             <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 flex items-center gap-3">
@@ -109,10 +118,10 @@ function LoginEmail({ onLogin }) {
           )}
 
           <form onSubmit={handleLogin} className="space-y-5">
-            {/* Email */}
+            {/* Username */}
             <div>
               <label className="block text-slate-300 text-sm font-medium mb-2">
-                Email Address
+                Admin Username
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -126,16 +135,16 @@ function LoginEmail({ onLogin }) {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                     />
                   </svg>
                 </div>
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-slate-900/50 border border-slate-700 pl-10 pr-4 py-3 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                  placeholder="you@example.com"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full bg-slate-900/50 border border-slate-700 pl-10 pr-4 py-3 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all"
+                  placeholder="Enter admin username"
                   required
                 />
               </div>
@@ -144,7 +153,7 @@ function LoginEmail({ onLogin }) {
             {/* Password */}
             <div>
               <label className="block text-slate-300 text-sm font-medium mb-2">
-                Password
+                Admin Password
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -166,8 +175,8 @@ function LoginEmail({ onLogin }) {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-900/50 border border-slate-700 pl-10 pr-12 py-3 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                  placeholder="Enter your password"
+                  className="w-full bg-slate-900/50 border border-slate-700 pl-10 pr-12 py-3 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all"
+                  placeholder="Enter admin password"
                   required
                 />
                 <button
@@ -215,17 +224,18 @@ function LoginEmail({ onLogin }) {
             </div>
 
             <button
+              type="submit"
               disabled={loading}
               className={`w-full py-3.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 mt-6 ${
                 loading
-                  ? "bg-blue-600/50 text-slate-300 cursor-not-allowed"
-                  : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/30"
+                  ? "bg-red-600/50 text-slate-300 cursor-not-allowed"
+                  : "bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white shadow-lg shadow-red-500/30"
               }`}
             >
               {loading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                  Signing in...
+                  Authenticating...
                 </>
               ) : (
                 <>
@@ -242,79 +252,30 @@ function LoginEmail({ onLogin }) {
                       d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
                     />
                   </svg>
-                  Sign In
+                  Access Admin Panel
                 </>
               )}
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-700"></div>
-            </div>
-            <div className="relative flex justify-center">
-              <span className="px-4 bg-slate-800/50 text-slate-500 text-sm">
-                or
-              </span>
-            </div>
-          </div>
-
-          {/* Links */}
-          <div className="space-y-3">
-            <Link
-              to="/register"
-              className="w-full py-3 rounded-xl font-medium text-center block bg-slate-700/50 hover:bg-slate-700 text-white border border-slate-600/50 transition-all"
+          {/* Back to User Login */}
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => navigate("/login")}
+              className="text-slate-400 hover:text-white text-sm transition-colors"
             >
-              Create New Account
-            </Link>
-            <Link
-              to="/login"
-              className="w-full py-3 rounded-xl font-medium text-center block text-slate-400 hover:text-white transition-colors"
-            >
-              ← Back to login options
-            </Link>
+              ← Back to User Login
+            </button>
           </div>
         </div>
 
-        {/* Features */}
-        <div className="mt-8 flex items-center justify-center gap-6 text-slate-500 text-xs">
-          <div className="flex items-center gap-1.5">
-            <svg
-              className="w-4 h-4 text-blue-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-              />
-            </svg>
-            End-to-end encrypted
-          </div>
-          <div className="flex items-center gap-1.5">
-            <svg
-              className="w-4 h-4 text-emerald-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-              />
-            </svg>
-            Secure login
-          </div>
-        </div>
+        {/* Footer */}
+        <p className="text-center text-slate-600 text-xs mt-6">
+          CryptoWallet Admin Portal • Secure Access
+        </p>
       </div>
     </div>
   );
 }
 
-export default LoginEmail;
+export default AdminLogin;

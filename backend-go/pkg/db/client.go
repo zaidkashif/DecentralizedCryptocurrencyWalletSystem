@@ -131,6 +131,28 @@ func (c *Client) GetBalance(ctx context.Context, walletID string) (int64, error)
 	return balance, err
 }
 
+// GetUTXOByID retrieves a single UTXO by its ID
+func (c *Client) GetUTXOByID(ctx context.Context, utxoID string) (map[string]interface{}, error) {
+	row := c.db.QueryRowContext(
+		ctx,
+		"SELECT utxo_id, owner_wallet_id, amount, spent FROM utxos WHERE utxo_id = $1",
+		utxoID,
+	)
+	var id, owner string
+	var amount int64
+	var spent bool
+	err := row.Scan(&id, &owner, &amount, &spent)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"utxo_id": id,
+		"owner":   owner,
+		"amount":  amount,
+		"spent":   spent,
+	}, nil
+}
+
 // InsertTransaction inserts a new transaction
 func (c *Client) InsertTransaction(ctx context.Context, txID, senderID, receiverID string, amount int64, note string, sig []byte, senderPub []byte, ip string) error {
 	// Updates for new schema: sender_public_key, ip_address
@@ -140,6 +162,44 @@ func (c *Client) InsertTransaction(ctx context.Context, txID, senderID, receiver
 		txID, senderID, receiverID, amount, note, sig, senderPub, ip,
 	)
 	return err
+}
+
+// GetTransactionByID retrieves a single transaction with full details including signature
+func (c *Client) GetTransactionByID(ctx context.Context, txID string) (map[string]interface{}, error) {
+	row := c.db.QueryRowContext(
+		ctx,
+		`SELECT tx_id, sender_wallet_id, receiver_wallet_id, amount, note, signature, sender_public_key, tx_type, status, ip_address, created_at 
+		 FROM transactions WHERE tx_id = $1`,
+		txID,
+	)
+	var id, senderID, receiverID, txType, status, ipAddr, createdAt string
+	var amount int64
+	var note *string
+	var signature, senderPub []byte
+	
+	err := row.Scan(&id, &senderID, &receiverID, &amount, &note, &signature, &senderPub, &txType, &status, &ipAddr, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	
+	noteVal := ""
+	if note != nil {
+		noteVal = *note
+	}
+	
+	return map[string]interface{}{
+		"tx_id":              id,
+		"sender_wallet_id":   senderID,
+		"receiver_wallet_id": receiverID,
+		"amount":             amount,
+		"note":               noteVal,
+		"signature":          signature,
+		"sender_public_key":  senderPub,
+		"tx_type":            txType,
+		"status":             status,
+		"ip_address":         ipAddr,
+		"created_at":         createdAt,
+	}, nil
 }
 
 // SpendUTXO marks a UTXO as spent

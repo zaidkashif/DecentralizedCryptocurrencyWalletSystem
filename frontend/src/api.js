@@ -9,6 +9,40 @@ const api = axios.create({
   },
 });
 
+// Helper function to convert base64 to Uint8Array
+function base64ToUint8Array(base64) {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Helper function to convert Uint8Array to base64
+function uint8ArrayToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+// Sign transaction payload using Ed25519 (via SubtleCrypto or tweetnacl)
+async function signTransaction(privateKeyBase64, payload) {
+  // For Ed25519 signing, we'll use the nacl library approach
+  // The private key from Go is 64 bytes (seed + public key)
+  const privateKey = base64ToUint8Array(privateKeyBase64);
+
+  // Import nacl-like signing using SubtleCrypto
+  // Since SubtleCrypto doesn't support Ed25519 in all browsers,
+  // we'll send the private key to a signing endpoint on the backend
+  // OR use a pure JS implementation
+
+  // For now, let's create the signature server-side via a dedicated endpoint
+  return null; // Will be handled by backend
+}
+
 // Wallet endpoints
 export const walletAPI = {
   create: () => api.post("/wallet/create"), // Internal usage
@@ -37,8 +71,13 @@ export const walletAPI = {
 
 // Transaction endpoints
 export const transactionAPI = {
-  submit: (transaction) => api.post("/tx/submit", transaction),
+  // Use sign-and-submit endpoint which handles signing server-side
+  submit: (transaction) => api.post("/tx/sign-and-submit", transaction),
+  // Legacy submit endpoint (requires pre-signed transaction)
+  submitSigned: (transaction) => api.post("/tx/submit", transaction),
   getHistory: () => api.get("/tx/history"),
+  // Get full transaction details including signature
+  getDetails: (txId) => api.get(`/tx/details?tx_id=${txId}`),
 };
 
 // Blockchain endpoints
@@ -93,6 +132,12 @@ export const authAPI = {
       new_email: newEmail,
       code,
     }),
+};
+
+// Zakat endpoints
+export const zakatAPI = {
+  getPool: () => api.get("/zakat/pool-balance"),
+  trigger: () => api.post("/zakat/trigger"),
 };
 
 export const healthCheck = () => api.get("/health");

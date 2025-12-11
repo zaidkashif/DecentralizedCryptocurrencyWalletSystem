@@ -8,6 +8,7 @@ import (
 
 // SendOTP sends the 6-digit code to the user via Gmail
 func SendOTP(toEmail, code string) error {
+	// 1. Get Credentials from .env (Same as debug script)
 	from := os.Getenv("SMTP_EMAIL")
 	password := os.Getenv("SMTP_PASSWORD")
 	smtpHost := "smtp.gmail.com"
@@ -17,24 +18,25 @@ func SendOTP(toEmail, code string) error {
 		return fmt.Errorf("SMTP credentials not set in .env")
 	}
 
-	// Message content
-	subject := "Subject: Your CryptoWallet OTP Code\n"
+	// 2. Format the Email Message
+	subject := "Subject: Your CryptoWallet Verification Code\n"
 	mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
 	body := fmt.Sprintf(`
 		<html>
-			<body>
-				<h2>Verification Code</h2>
-				<p>Your OTP code is: <strong>%s</strong></p>
-				<p>This code expires in 10 minutes.</p>
+			<body style="font-family: Arial, sans-serif; color: #333;">
+				<div style="max-width: 400px; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+					<h2 style="color: #2563EB;">Verification Code</h2>
+					<p>Your OTP code is:</p>
+					<h1 style="background: #f3f4f6; padding: 10px; text-align: center; letter-spacing: 5px;">%s</h1>
+					<p>This code expires in 10 minutes.</p>
+				</div>
 			</body>
 		</html>`, code)
 
 	msg := []byte(subject + mime + body)
 
-	// Authentication
+	// 3. Authenticate & Send
 	auth := smtp.PlainAuth("", from, password, smtpHost)
-
-	// Send email
 	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, from, []string{toEmail}, msg)
 	if err != nil {
 		return err

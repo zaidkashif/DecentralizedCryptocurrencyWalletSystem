@@ -16,11 +16,19 @@ import SendMoney from "./pages/SendMoney";
 import BlockExplorer from "./pages/BlockExplorer";
 import TransactionHistory from "./pages/TransactionHistory";
 import AdminPanel from "./pages/AdminPanel";
+import AdminLogin from "./pages/AdminLogin";
 import Profile from "./pages/Profile";
+import Beneficiaries from "./pages/Beneficiaries";
+import SystemLogs from "./pages/SystemLogs";
+import Reports from "./pages/Reports";
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [walletData, setWalletData] = useState(null);
+
+  // Separate admin authentication state
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [adminData, setAdminData] = useState(null);
 
   // Load wallet from localStorage on first load
   useEffect(() => {
@@ -34,6 +42,18 @@ function App() {
         localStorage.removeItem("wallet");
       }
     }
+
+    // Load admin session from localStorage
+    const savedAdmin = localStorage.getItem("adminSession");
+    if (savedAdmin) {
+      try {
+        const parsedAdmin = JSON.parse(savedAdmin);
+        setAdminData(parsedAdmin);
+        setIsAdminLoggedIn(true);
+      } catch {
+        localStorage.removeItem("adminSession");
+      }
+    }
   }, []);
 
   // Single function used for both login + signup success
@@ -43,6 +63,20 @@ function App() {
     setWalletData(wallet);
     localStorage.setItem("wallet", JSON.stringify(wallet));
     setIsLoggedIn(true);
+  };
+
+  // Admin login handler
+  const handleAdminLogin = (admin) => {
+    setAdminData(admin);
+    localStorage.setItem("adminSession", JSON.stringify(admin));
+    setIsAdminLoggedIn(true);
+  };
+
+  // Admin logout handler
+  const handleAdminLogout = () => {
+    setIsAdminLoggedIn(false);
+    setAdminData(null);
+    localStorage.removeItem("adminSession");
   };
 
   const handleLogout = () => {
@@ -138,9 +172,61 @@ function App() {
           />
 
           <Route
+            path="/beneficiaries"
+            element={
+              isLoggedIn ? (
+                <Beneficiaries walletData={walletData} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+
+          <Route
+            path="/logs"
+            element={
+              isLoggedIn ? (
+                <SystemLogs walletData={walletData} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+
+          <Route
+            path="/reports"
+            element={
+              isLoggedIn ? (
+                <Reports walletData={walletData} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+
+          <Route
             path="/admin"
             element={
-              isLoggedIn ? <AdminPanel /> : <Navigate to="/login" replace />
+              isAdminLoggedIn ? (
+                <AdminPanel
+                  adminData={adminData}
+                  onAdminLogout={handleAdminLogout}
+                />
+              ) : (
+                <Navigate to="/admin/login" replace />
+              )
+            }
+          />
+
+          {/* Admin Login Route - Separate from user auth */}
+          <Route
+            path="/admin/login"
+            element={
+              isAdminLoggedIn ? (
+                <Navigate to="/admin" replace />
+              ) : (
+                <AdminLogin onAdminLogin={handleAdminLogin} />
+              )
             }
           />
 
