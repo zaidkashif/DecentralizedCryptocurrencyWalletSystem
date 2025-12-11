@@ -125,7 +125,12 @@ func main() {
 		mux.HandleFunc("/zakat/pool-balance", zakatPoolBalanceHandler)
 	}
 
-	addr := ":8080"
+	// Use PORT from environment (for Render/cloud deployment) or default to 8080
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
 	log.Printf("🚀 Server listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, corsMiddleware(mux)))
 }
